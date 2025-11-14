@@ -2,17 +2,13 @@ import JoystickButton from "./JoystickButton";
 
 type Direction = "up" | "down" | "left" | "right"
 
-function Joystick({manualMode}) {
-    const handleMove = (direction: Direction) => {
-        console.log("Move:", direction);
-    };
-
+function Joystick({manualMode, setDirection}) {
     return (
     <div>
-        <JoystickButton direction="up" onClick={handleMove} />
-        <JoystickButton direction="down" onClick={handleMove} />
-        <JoystickButton direction="left" onClick={handleMove} />
-        <JoystickButton direction="right" onClick={handleMove} />
+        <JoystickButton direction="up" setDirection={setDirection} />
+        <JoystickButton direction="down" setDirection={setDirection} />
+        <JoystickButton direction="left" setDirection={setDirection} />
+        <JoystickButton direction="right" setDirection={setDirection} />
     </div>
     );
 }

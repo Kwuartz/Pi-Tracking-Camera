@@ -1,7 +1,5 @@
-type Resolution = "480p" | "720p" | "1080p";
-
 function ResolutionControl({current, onClick}) {
-    const resolutions: Resolution[] = ["480p", "720p", "1080p"];
+    const resolutions = ["480p", "720p", "1080p"];
     
     const handleClick = () => {
         const currentIndex = resolutions.indexOf(current);

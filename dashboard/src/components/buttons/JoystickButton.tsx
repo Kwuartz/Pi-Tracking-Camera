@@ -1,6 +1,6 @@
-function JoystickButton({direction, onClick}) {
+function JoystickButton({direction, setDirection}) {
     return (
-    <button onClick={() => onClick(direction)}>
+    <button onMouseDown={() => setDirection(direction)} onMouseUp={() => setDirection(null)} onMouseLeave={() => setDirection(null)}>
         {direction.toUpperCase()}
     </button>
     );

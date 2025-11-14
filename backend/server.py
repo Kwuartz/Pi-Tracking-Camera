@@ -12,11 +12,35 @@ app = Flask(__name__)
 # Camera setup
 picam2 = Picamera2()
 
+# States
+showFPS = True
+showOverlay = True
+manualMode = False
+resolution = (1920, 1080)
+
+# Detection variables
+boxes = []
+classes = []
+scores = []
+scoreThreshold = 0.4
+
+# Center tracking
+centers = []
+nextId = 0
+timeout = 2
+baseDistance = 0.5
+
+# FPS
+captureFPS = 0
+detectionFPS = 0
+prevCapture = time.time()
+prevDetection = time.time()
+
 # Use VideoConfiguration for faster GPU capture (still outputs NumPy arrays)
-camera_config = picam2.create_video_configuration(
-    main={"size": (1280, 720), "format": "RGB888"}
+cameraConfig = picam2.create_video_configuration(
+    main={"size": resolution, "format": "RGB888"}
 )
-picam2.configure(camera_config)
+picam2.configure(cameraConfig)
 picam2.start()
 
 # TFLite setup
@@ -31,29 +55,9 @@ lock = threading.Lock() # To prevent corruption
 outputFrame = None # MJPEG frame for streaming
 latestFrame = None # Raw frame for detection
 
-# Detection variables
-boxes = []
-classes = []
-scores = []
-scoreThreshold = 0.3
-
-# Center tracking
-centers = []
-nextId = 0
-timeout = 1000
-baseDistance = 200
-
-# FPS
-captureFPS = 0
-detectionFPS = 0
-prevCapture = time.time()
-prevDetection = time.time()
-
 # Detection
 def detectPerson(frame):
-    if frame is None:
-        return [], [], []
-
+    global boxes, classes, scores
     frame = np.ascontiguousarray(frame)
     img = cv2.resize(frame, (320, 320))
     input_data = np.expand_dims(img, axis=0).astype(np.uint8)
@@ -70,26 +74,22 @@ def detectPerson(frame):
     classes = classes[validIndices]
     scores = scores[validIndices]
 
-    return boxes, classes, scores
-
 # Detection results
-def drawBoxes(frame, boxes, classes, scores):
-    if boxes is None:
-        return frame
-
+def drawOverlay(frame):
     h, w, _ = frame.shape
     for i in range(len(boxes)):
         ymin, xmin, ymax, xmax = boxes[i]
         x1, y1 = int(xmin * w), int(ymin * h)
         x2, y2 = int(xmax * w), int(ymax * h)
-        if x1 < x2 and y1 < y2:
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, f"Person {scores[i]:.2f}", (x1, max(y1 - 10, 0)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(frame, f"Person {scores[i]:.2f}", (x1, max(y1 - 10, 0)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
     
     for c in centers:
-        cv2.circle(frame, (c["x"], c["y"]), 5, (0, 0, 255), -1)
-        cv2.putText(frame, f"ID {c['id']}", (c["x"] + 5, c["y"] - 5),
+        cx, cy = int(c["x"] * w), int(c["y"] * h)
+        cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
+        cv2.putText(frame, f"ID {c['id']}", (cx + 5, cy - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
     return frame
@@ -109,16 +109,17 @@ def captureLoop():
             currentClasses = classes
             currentScores = scores
 
-        # Draw boxes on the frame
-        processedFrame = drawBoxes(frame, currentBoxes, currentClasses, currentScores)
+        if showOverlay:
+            processedFrame = drawOverlay(frame)
 
         captureFPS = 1 / (time.time() - prevCapture)
         prevCapture = time.time()
         
-        cv2.putText(processedFrame, f"FPS: {captureFPS:.1f}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        cv2.putText(processedFrame, f"Detection FPS: {detectionFPS:.1f}", (10, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+        if showFPS:
+            cv2.putText(processedFrame, f"FPS: {captureFPS:.1f}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            cv2.putText(processedFrame, f"Detection FPS: {detectionFPS:.1f}", (10, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
 
         # Encode as JPEG
         ret, jpeg = cv2.imencode('.jpg', processedFrame)
@@ -135,56 +136,59 @@ def updateCenters(boxes):
     now = time.time()
     updatedCenters = []
 
-    # Compute centers from new boxes
+    # Compute normalized centers and box sizes
     newCenters = []
     for box in boxes:
         ymin, xmin, ymax, xmax = box
-        x = int((xmin + xmax) / 2 * 1280)  # assuming 1280x720 frame
-        y = int((ymin + ymax) / 2 * 720)
-        newCenters.append((x, y, abs(xmax - xmin), abs(ymax - ymin)))
+        x = (xmin + xmax) / 2
+        y = (ymin + ymax) / 2
+        w = xmax - xmin
+        h = ymax - ymin
+        newCenters.append((x, y, w, h))
 
-    # Match new centers to existing ones
-    for (x, y, boxWidth, boxHeight) in newCenters:
-        matched = False
+    for (x, y, w, h) in newCenters:
+        matched = None
+        minDistance = float("inf")
+
         for c in centers:
             distance = np.hypot(c["x"] - x, c["y"] - y)
-            timeDiff = (now - c["lastUpdated"]) * 1000 
-            boxSize = min(boxWidth, boxHeight)
-        
-            boxSizeFactor = max(0.5, boxSize / 200, 3.0)
-            timeFactor = 1.0 + min(timeDiff / 100.0, 5.0) 
+            timeDiff = now - c["lastUpdated"]
+            maxDistance = baseDistance * max(w, h) * (1.0 + timeDiff)
 
-            maxDistance = baseDistance * boxSizeFactor * timeFactor
+            if distance < minDistance and distance < maxDistance:
+                minDistance = distance
+                matched = c
 
-            # Update existing center
-            if distance < maxDistance:
-                c["x"], c["y"], c["lastUpdated"] = x, y, now
-                updatedCenters.append(c)
-                matched = True
-                break
-
-        # Create a new center
-        if not matched:
-            newCenter = {"id": nextId, "x": x, "y": y, "lastUpdated": now}
+        if matched:
+            matched["x"], matched["y"], matched["lastUpdated"] = x, y, now
+            updatedCenters.append(matched)
+        else:
+            updatedCenters.append({"id": nextId, "x": x, "y": y, "lastUpdated": now})
             nextId += 1
-            updatedCenters.append(newCenter)
+
+    for center in centers:
+        if not any(center["id"] == c["id"] for c in updatedCenters):
+            updatedCenters.append(center)
 
     # Remove expired centers
     centers = [c for c in updatedCenters if (now - c["lastUpdated"]) < timeout]
 
 # Detection loop
 def detectionLoop():
-    global boxes, classes, scores, detectionFPS, prevDetection
+    global boxes, detectionFPS, prevDetection
     while True:
-        with lock:
-            frame_for_detection = None if latestFrame is None else latestFrame.copy()
+        if !manualMode:
+            with lock:
+                detectionFrame = None if latestFrame is None else latestFrame.copy()
 
-        if frame_for_detection is not None:
-            boxes, classes, scores = detectPerson(frame_for_detection)
-            updateCenters(boxes)
+            if detectionFrame is not None:
+                detectPerson(detectionFrame)
+                updateCenters(boxes)
 
-        detectionFPS = 1 / (time.time() - prevDetection)
-        prevDetection = time.time()
+            detectionFPS = 1 / (time.time() - prevDetection)
+            prevDetection = time.time()
+        else:
+            detectionFPS = 0
 
 # MJPEG streaming
 def generateMjpeg():
@@ -196,7 +200,58 @@ def generateMjpeg():
             frame = outputFrame
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        time.sleep(0.03)
+
+
+@app.route('/api/toggle', methods=['POST'])
+def handle_toggle():
+    data = request.json
+    key = data.get("key")
+    value = data.get("value")
+
+    if key == "fps":
+        showFPS = value
+    elif key == "overlay":
+        showOverlay = value
+    elif key == "manual":
+        manualMode = value
+    else:
+        return jsonify({"status": "error", "message": "Unknown key"}), 400
+
+    return jsonify({"status": "ok", key: value})
+
+@app.route('/api/resolution', methods=['POST'])
+def handle_resolution():
+    global picam2
+    
+    data = request.json
+    resolution = data.get("resolution")
+    
+    if resolution == "420p":
+        resolution = (640, 480)
+    elif resolution == "720p":
+        resolution = (1280, 720)
+    elif resolution == "1080p":
+        resolution = (1920, 1080)
+    else:
+        return jsonify({"status": "error", "message": "Invalid resolution"}), 400
+
+    with lock:
+        picam2.stop()
+        
+        cameraConfig = picam2.create_video_configuration(
+            main={"size": resolution, "format": "RGB888"}
+        )
+        picam2.configure(cameraConfig)
+        picam2.start()
+    
+    return jsonify({"status": "ok", "resolution": resolution})
+
+@app.route('/api/joystick', methods=['POST'])
+def handle_joystick():
+    data = request.json
+    direction = data.get("direction")
+    
+    return jsonify({"status": "ok", "direction": direction})
 
 @app.route('/video')
 def videoFeed():
