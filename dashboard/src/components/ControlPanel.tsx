@@ -8,11 +8,11 @@ type Resolution = "480p" | "720p" | "1080p";
 function ControlPanel() {
     const [joystickDirection, setJoystickDirection] = useState(null);
 
-    const [currentResolution, setCurrentResolution] = useState("480p");
+    const [currentResolution, setCurrentResolution] = useState("1080p");
 
     const [toggles, setToggles] = useState({
         manual: false,
-        fps: false,
+        fps: true,
         overlay: true,
     });
     
@@ -22,7 +22,7 @@ function ControlPanel() {
             [key]: value,
         }));
 
-        fetch("/api/toggle", {
+        fetch("http://192.168.1.173:8000/api/toggle", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key, value }),
@@ -32,7 +32,7 @@ function ControlPanel() {
     const handleResolution = (resolution : Resolution) => {
         setCurrentResolution(resolution);
     
-        fetch("/api/resolution", {
+        fetch("http://192.168.1.173:8000/api/resolution", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ resolution }),
@@ -43,7 +43,7 @@ function ControlPanel() {
         if (!joystickDirection) return;
       
         const interval = setInterval(() => {
-            fetch("/api/joystick", {
+            fetch("http://192.168.1.173:8000/api/joystick", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ direction: joystickDirection }),

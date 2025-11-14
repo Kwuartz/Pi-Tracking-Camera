@@ -3,11 +3,13 @@ import threading
 import time
 import cv2
 import numpy as np
-from flask import Flask, Response
+from flask_cors import CORS
+from flask import Flask, Response, request, jsonify
 from picamera2 import Picamera2, Preview
 import tflite_runtime.interpreter as tflite
 
 app = Flask(__name__)
+CORS(app)
 
 # Camera setup
 picam2 = Picamera2()
@@ -76,6 +78,9 @@ def detectPerson(frame):
 
 # Detection results
 def drawOverlay(frame):
+    if boxes is None or len(boxes) == 0:
+        return frame
+
     h, w, _ = frame.shape
     for i in range(len(boxes)):
         ymin, xmin, ymax, xmax = boxes[i]
@@ -109,20 +114,20 @@ def captureLoop():
             currentClasses = classes
             currentScores = scores
 
-        if showOverlay:
-            processedFrame = drawOverlay(frame)
+        if showOverlay and not manualMode:
+            frame = drawOverlay(frame)
 
         captureFPS = 1 / (time.time() - prevCapture)
         prevCapture = time.time()
         
         if showFPS:
-            cv2.putText(processedFrame, f"FPS: {captureFPS:.1f}", (10, 30),
+            cv2.putText(frame, f"FPS: {captureFPS:.1f}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            cv2.putText(processedFrame, f"Detection FPS: {detectionFPS:.1f}", (10, 70),
+            cv2.putText(frame, f"Detection FPS: {detectionFPS:.1f}", (10, 70),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
 
         # Encode as JPEG
-        ret, jpeg = cv2.imencode('.jpg', processedFrame)
+        ret, jpeg = cv2.imencode('.jpg', frame)
         if not ret:
             continue
 
@@ -177,7 +182,7 @@ def updateCenters(boxes):
 def detectionLoop():
     global boxes, detectionFPS, prevDetection
     while True:
-        if !manualMode:
+        if not manualMode:
             with lock:
                 detectionFrame = None if latestFrame is None else latestFrame.copy()
 
@@ -189,6 +194,7 @@ def detectionLoop():
             prevDetection = time.time()
         else:
             detectionFPS = 0
+            time.sleep(0.1)
 
 # MJPEG streaming
 def generateMjpeg():
@@ -203,7 +209,8 @@ def generateMjpeg():
 
 
 @app.route('/api/toggle', methods=['POST'])
-def handle_toggle():
+def handleToggle():
+    global showFPS, showOverlay, manualMode
     data = request.json
     key = data.get("key")
     value = data.get("value")
@@ -220,13 +227,13 @@ def handle_toggle():
     return jsonify({"status": "ok", key: value})
 
 @app.route('/api/resolution', methods=['POST'])
-def handle_resolution():
+def handleResolution():
     global picam2
     
     data = request.json
     resolution = data.get("resolution")
-    
-    if resolution == "420p":
+    print(resolution)
+    if resolution == "480p":
         resolution = (640, 480)
     elif resolution == "720p":
         resolution = (1280, 720)
@@ -243,14 +250,18 @@ def handle_resolution():
         )
         picam2.configure(cameraConfig)
         picam2.start()
+
+        print("resolution")
     
     return jsonify({"status": "ok", "resolution": resolution})
 
 @app.route('/api/joystick', methods=['POST'])
-def handle_joystick():
+def handleJoystick():
     data = request.json
     direction = data.get("direction")
     
+    print(direction)
+
     return jsonify({"status": "ok", "direction": direction})
 
 @app.route('/video')
