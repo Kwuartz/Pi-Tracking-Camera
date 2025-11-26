@@ -5,7 +5,7 @@ import ResolutionControl from "./buttons/ResolutionControl";
 
 type Resolution = "480p" | "720p" | "1080p";
 
-function ControlPanel() {
+function ControlPanel( {source} ) {
     const [joystickDirection, setJoystickDirection] = useState(null);
 
     const [currentResolution, setCurrentResolution] = useState("1080p");
@@ -22,7 +22,7 @@ function ControlPanel() {
             [key]: value,
         }));
 
-        fetch("http://192.168.1.173:8000/api/toggle", {
+        fetch(`${source}/api/toggle`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key, value }),
@@ -32,7 +32,7 @@ function ControlPanel() {
     const handleResolution = (resolution : Resolution) => {
         setCurrentResolution(resolution);
     
-        fetch("http://192.168.1.173:8000/api/resolution", {
+        fetch(`${source}/api/resolution`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ resolution }),
@@ -43,7 +43,7 @@ function ControlPanel() {
         if (!joystickDirection) return;
       
         const interval = setInterval(() => {
-            fetch("http://192.168.1.173:8000/api/joystick", {
+            fetch(`${source}/api/joystick`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ direction: joystickDirection }),
@@ -54,34 +54,38 @@ function ControlPanel() {
     }, [joystickDirection]);
 
     return (
-        <div>
+        <div className="bg-gray-900 rounded-xl p-4 flex flex-col gap-4 max-h-screen">
             <ResolutionControl 
                 current={currentResolution}
                 onClick={handleResolution}
             />
 
-            <Toggle
-                value={toggles.manual}
-                onToggle={(value) => handleToggle("manual", value)}
-                label="Manual Mode"
-            />
+            <div className="flex gap-2">
+                <Toggle
+                    value={toggles.manual}
+                    onToggle={(value) => handleToggle("manual", value)}
+                    label="Manual Mode"
+                />
 
-            <Toggle
-                value={toggles.fps}
-                onToggle={(value) => handleToggle("fps", value)}
-                label="Show FPS"
-            />
+                <Toggle
+                    value={toggles.fps}
+                    onToggle={(value) => handleToggle("fps", value)}
+                    label="Show FPS"
+                />
 
-            <Toggle
-                value={toggles.overlay}
-                onToggle={(value) => handleToggle("overlay", value)}
-                label="Show Overlay"
-            />
+                <Toggle
+                    value={toggles.overlay}
+                    onToggle={(value) => handleToggle("overlay", value)}
+                    label="Show Overlay"
+                />
+            </div>
 
-            <Joystick 
-                manualMode={toggles.manualMode}
-                setDirection={setJoystickDirection}
-            />
+            {toggles.manual && (
+                <Joystick 
+                    manualMode={toggles.manualMode}
+                    setDirection={setJoystickDirection}
+                />
+            )}
         </div>
     );
 }

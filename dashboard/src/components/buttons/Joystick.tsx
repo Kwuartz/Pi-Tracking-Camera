@@ -1,16 +1,20 @@
 import JoystickButton from "./JoystickButton";
 
-type Direction = "up" | "down" | "left" | "right"
-
-function Joystick({manualMode, setDirection}) {
-    return (
-    <div>
-        <JoystickButton direction="up" setDirection={setDirection} />
-        <JoystickButton direction="down" setDirection={setDirection} />
-        <JoystickButton direction="left" setDirection={setDirection} />
-        <JoystickButton direction="right" setDirection={setDirection} />
-    </div>
-    );
+interface Props {
+    setDirection: (d: string | null) => void;
+    manualMode: boolean;
 }
 
-export default Joystick
+export default function Joystick({ setDirection }: Props) {
+    return (
+        <div className="flex flex-col items-center gap-2 mt-2">
+            <JoystickButton direction="up" setDirection={setDirection} />
+            <div className="flex gap-2">
+                <JoystickButton direction="left" setDirection={setDirection} />
+                <div className="w-16 h-16 rounded-full border border-gray-600" />
+                <JoystickButton direction="right" setDirection={setDirection} />
+            </div>
+            <JoystickButton direction="down" setDirection={setDirection} />
+        </div>
+    );
+}

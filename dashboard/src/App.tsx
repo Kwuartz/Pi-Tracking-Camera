@@ -1,17 +1,13 @@
-import Title from "./components/Title";
 import VideoFeed from "./components/VideoFeed";
 import ControlPanel from "./components/ControlPanel";
 
-function App() {
-  const videoSource = "/video";
+export default function App() {
+    const serverSource = "http://192.168.1.173:8000"
 
-  return (
-  <div>
-    <Title />
-    <VideoFeed videoSource={"http://192.168.1.173:8000/video"} />
-    <ControlPanel />
-  </div>
-  );
+    return (
+        <div className="min-h-screen max-h-screen w-screen bg-black text-white flex flex-col lg:flex-row p-2 gap-2">
+            <VideoFeed source={serverSource} />
+            <ControlPanel source={serverSource} />
+        </div>
+    );
 }
-
-export default App

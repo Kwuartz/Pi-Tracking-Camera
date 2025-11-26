@@ -78,7 +78,7 @@ def detectPerson(frame):
 
 # Detection results
 def drawOverlay(frame):
-    if boxes is None or len(boxes) == 0:
+    if boxes is None or len(boxes) != len(scores):
         return frame
 
     h, w, _ = frame.shape

@@ -1,18 +1,13 @@
-function VideoFeed({ videoSource }) {
+import { useState } from "react";
+
+export default function VideoFeed({ source }) {
     return (
-      <img
-        src={videoSource}
-        style={{
-          width: "70vw",          // 70% of the viewport width
-          height: "auto",         // maintain aspect ratio
-          objectFit: "contain",   // prevent cropping
-          display: "block",
-          margin: "0 auto",       // center horizontally
-        }}
-        alt="Video Feed"
-      />
+        <div className="flex-1 min-h-full max-h-screen bg-gray-900 rounded-lg border border-gray-700 flex items-center justify-center overflow-hidden text-gray-500">
+            <img
+                src={`${source}/video`}
+                alt="Video Feed"
+                className="w-full h-full object-contain"
+            />
+        </div>
     );
-  }
-  
-  export default VideoFeed;
-  
+}
