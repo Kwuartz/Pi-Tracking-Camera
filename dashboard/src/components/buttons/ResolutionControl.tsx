@@ -4,7 +4,7 @@ interface Props {
 }
 
 export default function ResolutionControl({ current, onClick }: Props) {
-    const resolutions = ["480p", "720p", "1080p"];
+    const resolutions = ["720p", "900p", "1080p"];
     return (
         <div className="flex flex-col w-full">
             <span className="text-sm text-gray-300 mb-1">Resolution</span>

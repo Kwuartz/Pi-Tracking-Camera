@@ -3,7 +3,7 @@ import Joystick from "./buttons/Joystick";
 import Toggle from "./buttons/Toggle";
 import ResolutionControl from "./buttons/ResolutionControl";
 
-type Resolution = "480p" | "720p" | "1080p";
+type Resolution = "720p" | "900p" | "1080p";
 
 function ControlPanel( {source} ) {
     const [joystickDirection, setJoystickDirection] = useState(null);
