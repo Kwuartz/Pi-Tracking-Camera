@@ -2,7 +2,6 @@ import JoystickButton from "./JoystickButton";
 
 interface Props {
     setDirection: (d: string | null) => void;
-    manualMode: boolean;
 }
 
 export default function Joystick({ setDirection }: Props) {

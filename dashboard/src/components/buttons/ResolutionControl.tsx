@@ -1,10 +1,13 @@
+type Resolution = "720p" | "900p" | "1080p";
+
 interface Props {
     current: string;
-    onClick: (res: string) => void;
+    onClick: (res: Resolution) => void;
 }
 
 export default function ResolutionControl({ current, onClick }: Props) {
-    const resolutions = ["720p", "900p", "1080p"];
+    const resolutions: Resolution[] = ["720p", "900p", "1080p"];
+    
     return (
         <div className="flex flex-col w-full">
             <span className="text-sm text-gray-300 mb-1">Resolution</span>

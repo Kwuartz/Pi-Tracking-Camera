@@ -1,24 +1,43 @@
 #!/usr/bin/env python3
-import threading
-import time
+import os
 import cv2
+import time
+import pigpio
+import threading
 import numpy as np
 from flask_cors import CORS
-from flask import Flask, Response, request, jsonify
+from flask import Flask, Response, request, jsonify, send_from_directory
 from picamera2 import Picamera2, Preview
 import tflite_runtime.interpreter as tflite
 
 app = Flask(__name__)
 CORS(app)
 
+FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist")
+
 # Camera setup
 picam2 = Picamera2()
 
+# Servo setup
+pi = pigpio.pi()
+
+# Servo settings
+TILT_GPIO = 2
+PAN_GPIO = 3
+
+MIN_PULSE = 500
+MAX_PULSE = 2400
+
+PAN_SPEED = 20
+TILT_SPEED = 20
+Kp = 15
+
 # States
-showFPS = True
-showOverlay = True
-manualMode = False
-resolution = (1920, 1080)
+showFPS = False
+showOverlay = False
+manual = False
+tracking = False
+resolution = (1600, 900)
 
 # Detection variables
 boxes = []
@@ -28,9 +47,11 @@ scoreThreshold = 0.4
 
 # Center tracking
 centers = []
+currentTarget = 0
 nextId = 0
-timeout = 2
-baseDistance = 0.5
+timeout = 1
+deadzone = 0.2
+baseDistance = 1
 
 # FPS
 captureFPS = 0
@@ -57,6 +78,18 @@ lock = threading.Lock() # To prevent corruption
 outputFrame = None # MJPEG frame for streaming
 latestFrame = None # Raw frame for detection
 
+# Conversion
+def angleToMicro(angle):
+    return MIN_PULSE + (angle / 180.0) * (MAX_PULSE - MIN_PULSE)
+
+# Start angles
+panAngle = 90
+tiltAngle = 135
+pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
+pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
+
+manualIncrement = -1
+
 # Detection
 def detectPerson(frame):
     global boxes, classes, scores
@@ -82,20 +115,30 @@ def drawOverlay(frame):
         return frame
 
     h, w, _ = frame.shape
+
     for i in range(len(boxes)):
-        ymin, xmin, ymax, xmax = boxes[i]
-        x1, y1 = int(xmin * w), int(ymin * h)
-        x2, y2 = int(xmax * w), int(ymax * h)
+        try:
+            ymin, xmin, ymax, xmax = boxes[i]
+            x1, y1 = int(xmin * w), int(ymin * h)
+            x2, y2 = int(xmax * w), int(ymax * h)
         
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(frame, f"Person {scores[i]:.2f}", (x1, max(y1 - 10, 0)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+        except:
+            pass
+        
+        try:
+            cv2.putText(frame, f"Person {scores[i]:.2f}", (x1, max(y1 - 10, 0)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        except IndexError:
+            pass
     
     for c in centers:
-        cx, cy = int(c["x"] * w), int(c["y"] * h)
-        cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
-        cv2.putText(frame, f"ID {c['id']}", (cx + 5, cy - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        if c["active"]:
+            cx, cy = int(c["x"] * w), int(c["y"] * h)
+            cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
+            cv2.putText(frame, f"ID {c['id']}", (cx + 5, cy - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
     return frame
 
@@ -104,6 +147,8 @@ def captureLoop():
     global latestFrame, outputFrame, captureFPS, prevCapture
 
     while True:
+        time.sleep(0.03)
+
         # Capture raw frame
         frame = picam2.capture_array()
 
@@ -113,11 +158,9 @@ def captureLoop():
             currentBoxes = boxes
             currentClasses = classes
             currentScores = scores
-
-        if showOverlay and not manualMode:
-            frame = drawOverlay(frame)
-
-        captureFPS = 1 / (time.time() - prevCapture)
+            
+        deltaTime = time.time() - prevCapture
+        captureFPS = 1 / (deltaTime)
         prevCapture = time.time()
         
         if showFPS:
@@ -126,13 +169,46 @@ def captureLoop():
             cv2.putText(frame, f"Detection FPS: {detectionFPS:.1f}", (10, 70),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
 
+        if showOverlay:
+            frame = drawOverlay(frame)
+
         # Encode as JPEG
-        ret, jpeg = cv2.imencode('.jpg', frame)
+        ret, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
         if not ret:
             continue
 
         with lock:
             outputFrame = jpeg.tobytes()
+
+def trackCenters(dt):
+    global panAngle, tiltAngle, currentTarget
+    
+    if len(centers) > 0:
+        target = next((center for center in centers if center["id"] == currentTarget), None)
+        
+        if not target:
+            target = centers[0]
+            currentTarget = target["id"]
+
+        if target["active"]:
+            cx, cy = target["x"], target["y"]
+
+            xError = 0.5 - cx
+            yError = 0.5 - cy
+            
+            panDelta = Kp * xError
+            tiltDelta = Kp * -yError
+
+
+            if abs(panDelta) > deadzone:
+                panAngle += max(-PAN_SPEED * dt, min(PAN_SPEED * dt, panDelta))
+                panAngle = max(0, min(180, panAngle))
+                pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
+
+            if abs(tiltDelta) > 0.4:
+                tiltAngle += max(-TILT_SPEED * dt, min(TILT_SPEED * dt, tiltDelta))  
+                tiltAngle = max(0, min(180, tiltAngle))
+                pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
 
 # Center tracking
 def updateCenters(boxes):
@@ -145,13 +221,15 @@ def updateCenters(boxes):
     newCenters = []
     for box in boxes:
         ymin, xmin, ymax, xmax = box
-        x = (xmin + xmax) / 2
-        y = (ymin + ymax) / 2
         w = xmax - xmin
         h = ymax - ymin
-        newCenters.append((x, y, w, h))
 
-    for (x, y, w, h) in newCenters:
+        x = xmin + (w / 2)
+        y = ymin + (h / 3)
+
+        newCenters.append((x, y))
+
+    for (x, y) in newCenters:
         matched = None
         minDistance = float("inf")
 
@@ -165,14 +243,15 @@ def updateCenters(boxes):
                 matched = c
 
         if matched:
-            matched["x"], matched["y"], matched["lastUpdated"] = x, y, now
+            matched["x"], matched["y"], matched["lastUpdated"], matched["active"] = x, y, now, True
             updatedCenters.append(matched)
         else:
-            updatedCenters.append({"id": nextId, "x": x, "y": y, "lastUpdated": now})
+            updatedCenters.append({"id": nextId, "x": x, "y": y, "lastUpdated": now, "active": True})
             nextId += 1
 
     for center in centers:
         if not any(center["id"] == c["id"] for c in updatedCenters):
+            center["active"] == False
             updatedCenters.append(center)
 
     # Remove expired centers
@@ -182,35 +261,41 @@ def updateCenters(boxes):
 def detectionLoop():
     global boxes, detectionFPS, prevDetection
     while True:
-        if not manualMode:
+        if tracking:
             with lock:
                 detectionFrame = None if latestFrame is None else latestFrame.copy()
+
+            deltaTime = (time.time() - prevDetection)
+            detectionFPS = 1 / deltaTime
+            prevDetection = time.time()
 
             if detectionFrame is not None:
                 detectPerson(detectionFrame)
                 updateCenters(boxes)
 
-            detectionFPS = 1 / (time.time() - prevDetection)
-            prevDetection = time.time()
+                if not manual:
+                    trackCenters(deltaTime)
         else:
             detectionFPS = 0
-            time.sleep(0.1)
+            time.sleep(0.2)
 
 # MJPEG streaming
 def generateMjpeg():
     global outputFrame
     while True:
         with lock:
-            if outputFrame is None:
-                continue
             frame = outputFrame
+        if frame is None:
+            time.sleep(0.01)
+            continue
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        time.sleep(0.03)
 
 
 @app.route('/api/toggle', methods=['POST'])
 def handleToggle():
-    global showFPS, showOverlay, manualMode
+    global showFPS, showOverlay, manual, tracking
     data = request.json
     key = data.get("key")
     value = data.get("value")
@@ -220,7 +305,9 @@ def handleToggle():
     elif key == "overlay":
         showOverlay = value
     elif key == "manual":
-        manualMode = value
+        manual = value
+    elif key == "tracking":
+        tracking = value
     else:
         return jsonify({"status": "error", "message": "Unknown key"}), 400
 
@@ -232,14 +319,15 @@ def handleResolution():
     
     data = request.json
     resolution = data.get("resolution")
-    print(resolution)
-    if resolution == "480p":
-        resolution = (640, 480)
+
+    if resolution == "900p":
+        resolution = (1600, 900)
     elif resolution == "720p":
         resolution = (1280, 720)
     elif resolution == "1080p":
         resolution = (1920, 1080)
     else:
+        print("not work")
         return jsonify({"status": "error", "message": "Invalid resolution"}), 400
 
     with lock:
@@ -250,24 +338,49 @@ def handleResolution():
         )
         picam2.configure(cameraConfig)
         picam2.start()
-
-        print("resolution")
     
     return jsonify({"status": "ok", "resolution": resolution})
 
 @app.route('/api/joystick', methods=['POST'])
 def handleJoystick():
+    global panAngle, tiltAngle
+
     data = request.json
     direction = data.get("direction")
     
-    print(direction)
+    if direction:  # Discrete mode
+        if direction == "left":
+            panAngle = max(0, panAngle - manualIncrement)
+            pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
+        elif direction == "right":
+            panAngle = min(180, panAngle + manualIncrement)
+            pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
+        elif direction == "up":
+            tiltAngle = min(180, tiltAngle + manualIncrement)
+            pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
+        elif direction == "down":
+            tiltAngle = max(0, tiltAngle - manualIncrement)
+            pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
+        else:
+            return jsonify({"status": "error", "message": "Invalid direction"}), 400
+        
+        return jsonify({"status": "ok"})
+    else:
+        return jsonify({"status": "error", "message": "Missing direction or x/y"}), 400
 
-    return jsonify({"status": "ok", "direction": direction})
+    time.sleep(0.01)
 
 @app.route('/video')
 def videoFeed():
     return Response(generateMjpeg(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path):
+    if path == "" or path == "index.html":
+        return send_from_directory(FRONTEND_DIST, "index.html")
+    return send_from_directory(FRONTEND_DIST, path)
 
 # Start threads
 if __name__ == '__main__':

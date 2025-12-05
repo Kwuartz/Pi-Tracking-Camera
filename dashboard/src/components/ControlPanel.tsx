@@ -5,18 +5,19 @@ import ResolutionControl from "./buttons/ResolutionControl";
 
 type Resolution = "720p" | "900p" | "1080p";
 
-function ControlPanel( {source} ) {
-    const [joystickDirection, setJoystickDirection] = useState(null);
+function ControlPanel( {source} : { source: string } ) {
+    const [joystickDirection, setJoystickDirection] = useState<string | null>(null);
 
-    const [currentResolution, setCurrentResolution] = useState("1080p");
+    const [currentResolution, setCurrentResolution] = useState<Resolution>("900p");;
 
     const [toggles, setToggles] = useState({
         manual: false,
-        fps: true,
-        overlay: true,
+        fps: false,
+        overlay: false,
+        tracking: false,
     });
     
-    const handleToggle = (key, value : boolean) => {
+    const handleToggle = (key : string, value : boolean) => {
         setToggles(prev => ({
             ...prev,
             [key]: value,
@@ -48,7 +49,7 @@ function ControlPanel( {source} ) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ direction: joystickDirection }),
             }).catch(err => console.error("Failed to send joystick:", err));
-        }, 100);
+        }, 50);
       
         return () => clearInterval(interval);
     }, [joystickDirection]);
@@ -72,17 +73,22 @@ function ControlPanel( {source} ) {
                     onToggle={(value) => handleToggle("fps", value)}
                     label="Show FPS"
                 />
-
+            
                 <Toggle
                     value={toggles.overlay}
                     onToggle={(value) => handleToggle("overlay", value)}
                     label="Show Overlay"
                 />
+
+                <Toggle
+                    value={toggles.tracking}
+                    onToggle={(value) => handleToggle("tracking", value)}
+                    label="Tracking"
+                />
             </div>
 
             {toggles.manual && (
-                <Joystick 
-                    manualMode={toggles.manualMode}
+                <Joystick
                     setDirection={setJoystickDirection}
                 />
             )}
