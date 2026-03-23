@@ -34,12 +34,15 @@ TRACKING_COEFFICIENT = 15
 
 pi = pigpio.pi()
 
-pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
-pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
-
 # Start angles
 panAngle = 90
 tiltAngle = 135
+
+def angleToMicro(angle):
+    return MIN_PULSE + (angle / 180.0) * (MAX_PULSE - MIN_PULSE)
+
+pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
+pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
 
 # States
 showFPS = False
@@ -96,9 +99,6 @@ DEVICE_NAME = "peep"
 DEVICE_TYPE = "security_camera"
 PING_DELAY = 10
 
-def angleToMicro(angle):
-    return MIN_PULSE + (angle / 180.0) * (MAX_PULSE - MIN_PULSE)
-
 def detectPerson(frame):
     global boxes, classes, scores
     frame = np.ascontiguousarray(frame)
@@ -145,7 +145,7 @@ def drawOverlay(frame):
         if c["active"]:
             cx, cy = int(c["x"] * w), int(c["y"] * h)
             cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
-            cv2.putText(frame, f"ID {c["id"]}", (cx + 5, cy - 5),
+            cv2.putText(frame, f"ID {c['id']}", (cx + 5, cy - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
     return frame
