@@ -3,6 +3,7 @@ import os
 import cv2
 import time
 import pigpio
+import requests
 import threading
 import numpy as np
 from flask_cors import CORS
@@ -10,10 +11,13 @@ from flask import Flask, Response, request, jsonify, send_from_directory
 from picamera2 import Picamera2, Preview
 import tflite_runtime.interpreter as tflite
 
+# Flask
 app = Flask(__name__)
 CORS(app)
 
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist")
+FLASK_PORT = 5000
+VIDEO_ENDPOINT = "/video"
 
 # Servo setup
 TILT_GPIO = 2
@@ -86,6 +90,12 @@ lock = threading.Lock() # To prevent corruption
 outputFrame = None # MJPEG frame for streaming
 latestFrame = None # Raw frame for detection
 
+# IoT Hub Integration
+SERVER_URL = "http://192.168.1.124:5000"
+DEVICE_NAME = "peep"
+DEVICE_TYPE = "security_camera"
+PING_DELAY = 10
+
 def angleToMicro(angle):
     return MIN_PULSE + (angle / 180.0) * (MAX_PULSE - MIN_PULSE)
 
@@ -95,12 +105,12 @@ def detectPerson(frame):
     img = cv2.resize(frame, (320, 320))
     input_data = np.expand_dims(img, axis=0).astype(np.uint8)
 
-    interpreter.set_tensor(inputDetails[0]['index'], input_data)
+    interpreter.set_tensor(inputDetails[0]["index"], input_data)
     interpreter.invoke()
 
-    boxes = interpreter.get_tensor(outputDetails[0]['index'])[0]
-    classes = interpreter.get_tensor(outputDetails[1]['index'])[0].astype(int)
-    scores = interpreter.get_tensor(outputDetails[2]['index'])[0]
+    boxes = interpreter.get_tensor(outputDetails[0]["index"])[0]
+    classes = interpreter.get_tensor(outputDetails[1]["index"])[0].astype(int)
+    scores = interpreter.get_tensor(outputDetails[2]["index"])[0]
 
     validIndices = np.where((scores >= scoreThreshold) & (classes == 0))[0]
     boxes = boxes[validIndices]
@@ -135,7 +145,7 @@ def drawOverlay(frame):
         if c["active"]:
             cx, cy = int(c["x"] * w), int(c["y"] * h)
             cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
-            cv2.putText(frame, f"ID {c['id']}", (cx + 5, cy - 5),
+            cv2.putText(frame, f"ID {c["id"]}", (cx + 5, cy - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
     return frame
@@ -170,7 +180,7 @@ def captureLoop():
             frame = drawOverlay(frame)
 
         # CPU Encoding
-        ret, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+        ret, jpeg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
         if not ret:
             continue
 
@@ -284,11 +294,30 @@ def generateMjpeg():
         if frame is None:
             time.sleep(0.01)
             continue
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        yield (b"--frame\r\n"
+               b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
         time.sleep(0.03)
 
-@app.route('/api/toggle', methods=['POST'])
+def ping_server():
+    while True:
+        try:
+            payload = {
+                "name": DEVICE_NAME,
+                "device": DEVICE_TYPE,
+                "config": {
+                    "stream_type": "mjpeg",
+                    "stream_endpoint": f":{FLASK_PORT}{VIDEO_ENDPOINT}"
+                }
+            }
+
+            requests.post(f"{MAIN_SERVER}/ping", json=payload, timeout=2)
+
+        except Exception as e:
+            print("[PING ERROR]", e)
+
+        time.sleep(PING_DELAY)
+
+@app.route("/api/toggle", methods=["POST"])
 def handleToggle():
     global showFPS, showOverlay, manual, tracking
     data = request.json
@@ -308,7 +337,7 @@ def handleToggle():
 
     return jsonify({"status": "ok", key: value})
 
-@app.route('/api/resolution', methods=['POST'])
+@app.route("/api/resolution", methods=["POST"])
 def handleResolution():
     global picam2
     
@@ -336,7 +365,7 @@ def handleResolution():
     
     return jsonify({"status": "ok", "resolution": resolution})
 
-@app.route('/api/joystick', methods=['POST'])
+@app.route("/api/joystick", methods=["POST"])
 def handleJoystick():
     global panAngle, tiltAngle
 
@@ -365,10 +394,10 @@ def handleJoystick():
 
     time.sleep(0.01)
 
-@app.route('/video')
+@app.route(VIDEO_ENDPOINT)
 def videoFeed():
     return Response(generateMjpeg(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+                    mimetype="multipart/x-mixed-replace; boundary=frame")
 
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
@@ -377,10 +406,10 @@ def serve_frontend(path):
         return send_from_directory(FRONTEND_DIST, "index.html")
     return send_from_directory(FRONTEND_DIST, path)
 
-if __name__ == '__main__':
-    t1 = threading.Thread(target=captureLoop, daemon=True)
-    t2 = threading.Thread(target=detectionLoop, daemon=True)
-    t1.start()
-    t2.start()
+if __name__ == "__main__":
+    threading.Thread(target=captureLoop, daemon=True).start()
+    threading.Thread(target=detectionLoop, daemon=True).start()
+    threading.Thread(target=ping_server, daemon=True).start()
 
-    app.run(host='0.0.0.0', port=8000, threaded=True)
+
+    app.run(host="0.0.0.0", port=FLASK_PORT, threaded=True)
