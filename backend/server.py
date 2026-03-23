@@ -15,29 +15,34 @@ CORS(app)
 
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist")
 
-# Camera setup
-picam2 = Picamera2()
-
 # Servo setup
 pi = pigpio.pi()
 
-# Servo settings
+pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
+pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
+
 TILT_GPIO = 2
 PAN_GPIO = 3
 
 MIN_PULSE = 500
 MAX_PULSE = 2400
 
+# Tracking algorithm
+MANUAL_INCREMENT = -1
 PAN_SPEED = 20
 TILT_SPEED = 20
-Kp = 15
+TRACKING_COEFFICIENT = 15
+
+# Start angles
+panAngle = 90
+tiltAngle = 135
 
 # States
 showFPS = False
 showOverlay = False
 manual = False
 tracking = False
-resolution = (1600, 900)
+resolution = (1320, 990)
 
 # Detection variables
 boxes = []
@@ -59,14 +64,17 @@ detectionFPS = 0
 prevCapture = time.time()
 prevDetection = time.time()
 
-# Use VideoConfiguration for faster GPU capture (still outputs NumPy arrays)
+# Camera setup
+picam2 = Picamera2()
+
+# GPU capture
 cameraConfig = picam2.create_video_configuration(
     main={"size": resolution, "format": "RGB888"}
 )
 picam2.configure(cameraConfig)
 picam2.start()
 
-# TFLite setup
+# TFLite
 modelPath = "model.tflite"
 interpreter = tflite.Interpreter(model_path=modelPath)
 interpreter.allocate_tensors()
@@ -78,19 +86,9 @@ lock = threading.Lock() # To prevent corruption
 outputFrame = None # MJPEG frame for streaming
 latestFrame = None # Raw frame for detection
 
-# Conversion
 def angleToMicro(angle):
     return MIN_PULSE + (angle / 180.0) * (MAX_PULSE - MIN_PULSE)
 
-# Start angles
-panAngle = 90
-tiltAngle = 135
-pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
-pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
-
-manualIncrement = -1
-
-# Detection
 def detectPerson(frame):
     global boxes, classes, scores
     frame = np.ascontiguousarray(frame)
@@ -109,7 +107,7 @@ def detectPerson(frame):
     classes = classes[validIndices]
     scores = scores[validIndices]
 
-# Detection results
+
 def drawOverlay(frame):
     if boxes is None or len(boxes) != len(scores):
         return frame
@@ -142,14 +140,13 @@ def drawOverlay(frame):
 
     return frame
 
-# Capture loop (produces MJPEG using CPU encoding)
+
 def captureLoop():
     global latestFrame, outputFrame, captureFPS, prevCapture
 
     while True:
         time.sleep(0.03)
 
-        # Capture raw frame
         frame = picam2.capture_array()
 
         # Copy for detection thread
@@ -165,15 +162,15 @@ def captureLoop():
         
         if showFPS:
             cv2.putText(frame, f"FPS: {captureFPS:.1f}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             cv2.putText(frame, f"Detection FPS: {detectionFPS:.1f}", (10, 70),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
 
         if showOverlay:
             frame = drawOverlay(frame)
 
-        # Encode as JPEG
-        ret, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        # CPU Encoding
+        ret, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
         if not ret:
             continue
 
@@ -196,8 +193,8 @@ def trackCenters(dt):
             xError = 0.5 - cx
             yError = 0.5 - cy
             
-            panDelta = Kp * xError
-            tiltDelta = Kp * -yError
+            panDelta = TRACKING_COEFFICIENT * xError
+            tiltDelta = TRACKING_COEFFICIENT * -yError
 
 
             if abs(panDelta) > deadzone:
@@ -251,13 +248,13 @@ def updateCenters(boxes):
 
     for center in centers:
         if not any(center["id"] == c["id"] for c in updatedCenters):
-            center["active"] == False
+            center["active"] = False
             updatedCenters.append(center)
 
     # Remove expired centers
     centers = [c for c in updatedCenters if (now - c["lastUpdated"]) < timeout]
 
-# Detection loop
+
 def detectionLoop():
     global boxes, detectionFPS, prevDetection
     while True:
@@ -279,7 +276,6 @@ def detectionLoop():
             detectionFPS = 0
             time.sleep(0.2)
 
-# MJPEG streaming
 def generateMjpeg():
     global outputFrame
     while True:
@@ -291,7 +287,6 @@ def generateMjpeg():
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
         time.sleep(0.03)
-
 
 @app.route('/api/toggle', methods=['POST'])
 def handleToggle():
@@ -321,7 +316,7 @@ def handleResolution():
     resolution = data.get("resolution")
 
     if resolution == "900p":
-        resolution = (1600, 900)
+        resolution = (900, 600)
     elif resolution == "720p":
         resolution = (1280, 720)
     elif resolution == "1080p":
@@ -348,18 +343,18 @@ def handleJoystick():
     data = request.json
     direction = data.get("direction")
     
-    if direction:  # Discrete mode
+    if direction:
         if direction == "left":
-            panAngle = max(0, panAngle - manualIncrement)
+            panAngle = max(0, panAngle - MANUAL_INCREMENT)
             pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
         elif direction == "right":
-            panAngle = min(180, panAngle + manualIncrement)
+            panAngle = min(180, panAngle + MANUAL_INCREMENT)
             pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
         elif direction == "up":
-            tiltAngle = min(180, tiltAngle + manualIncrement)
+            tiltAngle = min(180, tiltAngle + MANUAL_INCREMENT)
             pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
         elif direction == "down":
-            tiltAngle = max(0, tiltAngle - manualIncrement)
+            tiltAngle = max(0, tiltAngle - MANUAL_INCREMENT)
             pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
         else:
             return jsonify({"status": "error", "message": "Invalid direction"}), 400
@@ -382,7 +377,6 @@ def serve_frontend(path):
         return send_from_directory(FRONTEND_DIST, "index.html")
     return send_from_directory(FRONTEND_DIST, path)
 
-# Start threads
 if __name__ == '__main__':
     t1 = threading.Thread(target=captureLoop, daemon=True)
     t2 = threading.Thread(target=detectionLoop, daemon=True)
