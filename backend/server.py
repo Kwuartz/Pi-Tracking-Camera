@@ -313,7 +313,7 @@ def ping_server():
             requests.post(f"{SERVER_URL}/ping", json=payload, timeout=2)
 
         except Exception as e:
-            print("[PING ERROR]", e)
+            print("[PING] Error:", e)
 
         time.sleep(PING_DELAY)
 
