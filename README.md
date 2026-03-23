@@ -1,0 +1,1 @@
+A real-time human tracking system using computer vision and servo-controlled camera movement. 
