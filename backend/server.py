@@ -16,11 +16,6 @@ CORS(app)
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist")
 
 # Servo setup
-pi = pigpio.pi()
-
-pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
-pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
-
 TILT_GPIO = 2
 PAN_GPIO = 3
 
@@ -32,6 +27,11 @@ MANUAL_INCREMENT = -1
 PAN_SPEED = 20
 TILT_SPEED = 20
 TRACKING_COEFFICIENT = 15
+
+pi = pigpio.pi()
+
+pi.set_servo_pulsewidth(PAN_GPIO, angleToMicro(panAngle))
+pi.set_servo_pulsewidth(TILT_GPIO, angleToMicro(tiltAngle))
 
 # Start angles
 panAngle = 90
