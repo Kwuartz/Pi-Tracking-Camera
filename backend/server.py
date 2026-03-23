@@ -16,7 +16,7 @@ app = Flask(__name__)
 CORS(app)
 
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist")
-FLASK_PORT = 5000
+FLASK_PORT = 8000
 VIDEO_ENDPOINT = "/video"
 
 # Servo setup
