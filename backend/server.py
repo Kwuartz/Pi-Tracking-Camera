@@ -370,7 +370,7 @@ def handleJoystick():
     global panAngle, tiltAngle
 
     data = request.json
-    direction = data.get("direction")
+    direction = data.get("joystick") or data.get("direction")
     
     if direction:
         if direction == "left":

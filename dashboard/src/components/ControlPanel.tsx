@@ -47,7 +47,7 @@ function ControlPanel( {source} : { source: string } ) {
             fetch(`${source}/api/joystick`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ direction: joystickDirection }),
+                body: JSON.stringify({ joystick: joystickDirection }),
             }).catch(err => console.error("Failed to send joystick:", err));
         }, 50);
       
